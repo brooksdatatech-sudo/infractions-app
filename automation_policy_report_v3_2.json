@@ -1,0 +1,19 @@
+{
+  "target_precision": 0.9,
+  "val_estimates": {
+    "auto_flag_sample_precision": null,
+    "auto_flag_label_precision": null,
+    "coverage": {
+      "AUTO_FLAG": 0.0,
+      "AUTO_CLEAR": 0.0,
+      "REVIEW": 1.0
+    }
+  },
+  "notes": {
+    "min_val_positives_per_label": 5,
+    "abstain_margin": 0.02,
+    "auto_clear_max_prob": 0.08,
+    "allowed_labels": [],
+    "topk_at_decision": 3
+  }
+}
