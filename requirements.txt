@@ -1,0 +1,7 @@
+streamlit>=1.36
+tensorflow>=2.12,<2.17
+numpy>=1.23
+pandas>=2.0
+Pillow>=10.0
+requests>=2.31
+scikit-learn>=1.2
