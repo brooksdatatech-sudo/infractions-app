@@ -1,9 +1,11 @@
 import io, os, json, tempfile, requests
+os.environ.setdefault("KERAS_BACKEND", "tensorflow")
 import numpy as np
 import pandas as pd
 from PIL import Image
 import streamlit as st
 import tensorflow as tf
+import keras
 
 # -----------------------------
 # Configuration
@@ -37,8 +39,13 @@ def load_model():
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(resp.content)
-    # compile=False avoids trying to restore training losses/metrics if mismatched
-    model = tf.keras.models.load_model(path, compile=False)
+
+    # Prefer Keras 3 native loader for .keras files
+    try:
+        model = keras.saving.load_model(path)  # Keras 3 native format
+    except Exception as e_k3:
+        # Fallback to tf.keras if the file happens to be a TF SavedModel/HDF5
+        model = tf.keras.models.load_model(path)
     return model
 
 # -----------------------------
