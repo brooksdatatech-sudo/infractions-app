@@ -6,6 +6,81 @@ from PIL import Image
 import streamlit as st
 import tensorflow as tf
 import keras
+from PIL import Image, ImageOps
+import streamlit as st
+
+TFLITE_PATH = os.environ.get("TFLITE_PATH", "models/infractions_dynamic.tflite")
+
+@st.cache_resource(show_spinner=True)
+def load_tflite():
+    if not os.path.exists(TFLITE_PATH):
+        return None
+    interpreter = tf.lite.Interpreter(model_path=TFLITE_PATH)
+    interpreter.allocate_tensors()
+    return interpreter, interpreter.get_input_details(), interpreter.get_output_details()
+
+def _prep_image(img_pil, h, w, c, dtype):
+    img = ImageOps.exif_transpose(img_pil)
+    if c == 1:
+        img = img.convert("L").resize((w, h), Image.BILINEAR)
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        arr = arr[..., None]
+    else:
+        img = img.convert("RGB").resize((w, h), Image.BILINEAR)
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+    if dtype == np.int8:
+        # quantize using the input tensor’s scale/zero_point (applied later per-input)
+        pass
+    return arr
+
+def _dequantize(q, scale, zero_point):
+    return scale * (q.astype(np.float32) - zero_point)
+
+def predict_tflite(interp_pack, img_pil):
+    interpreter, in_details, out_details = interp_pack
+
+    feed = {}
+    img_set = False
+    for d in in_details:
+        shape, dtype = d["shape"], d["dtype"]
+        if len(shape) == 4:
+            _, H, W, C = shape
+            arr = _prep_image(img_pil, H, W, C, dtype)
+            if dtype == np.int8:
+                scale, zero = d["quantization"]
+                arr = (arr / scale + zero).round().astype(np.int8)
+            x = np.expand_dims(arr, 0).astype(dtype)
+            feed[d["index"]] = x
+            img_set = True
+        elif len(shape) == 2:
+            _, D = shape
+            feed[d["index"]] = np.zeros((1, D), dtype=dtype)
+        else:
+            feed[d["index"]] = np.zeros(shape, dtype=dtype)
+
+    if not img_set and in_details:
+        d = in_details[0]
+        shape, dtype = d["shape"], d["dtype"]
+        if len(shape) == 4:
+            _, H, W, C = shape
+            arr = _prep_image(img_pil, H, W, C, dtype)
+            if dtype == np.int8:
+                scale, zero = d["quantization"]
+                arr = (arr / scale + zero).round().astype(np.int8)
+            feed[d["index"]] = np.expand_dims(arr, 0).astype(dtype)
+        else:
+            feed[d["index"]] = np.zeros(shape, dtype=dtype)
+
+    for idx, x in feed.items():
+        interpreter.set_tensor(idx, x)
+
+    interpreter.invoke()
+    d = out_details[0]
+    out = interpreter.get_tensor(d["index"]).reshape(1, -1)
+    if d["dtype"] == np.int8 and d["quantization"] is not None:
+        scale, zero = d["quantization"]
+        out = _dequantize(out, scale, zero)
+    return out[0]
 
 # -----------------------------
 # Configuration
@@ -158,6 +233,7 @@ with st.sidebar:
     st.header("Settings")
     labels, thr_deploy, auto_thr = load_labels_and_thresholds()
     model = load_model()
+    tflite_pack = load_tflite()   # (interpreter, input_details, output_details) or None
     # Show what the model expects
     mh, mw, mc, _ = get_image_input_spec(model)
     st.write(f"**Model image spec:** {mh}×{mw}×{mc}")
@@ -175,7 +251,7 @@ with tab1:
         img = Image.open(uploaded)
         st.image(img, caption="Uploaded", use_column_width=True)
         with st.spinner("Predicting..."):
-            probs = predict_image(model, img)
+            probs = predict_tflite(tflite_pack, img) if tflite_pack else predict_image(model, img)
             df, decision, ctx = decision_for_sample(probs, labels, thr_deploy, topk=topk, margin=margin, auto_thr=auto_thr)
 
         colA, colB = st.columns([2,1])
